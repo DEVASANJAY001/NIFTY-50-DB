@@ -1,7 +1,6 @@
 streamlit
-streamlit-autorefresh
-kiteconnect
 pandas
 numpy
-psycopg2-binary
+kiteconnect
+streamlit-autorefresh
 supabase
