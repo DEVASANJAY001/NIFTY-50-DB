@@ -2,5 +2,5 @@ streamlit
 pandas
 numpy
 kiteconnect
-streamlit-autorefresh
 supabase
+streamlit-autorefresh
