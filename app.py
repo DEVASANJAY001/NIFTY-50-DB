@@ -45,8 +45,10 @@ def get_price():
     try:
         q = kite.ltp("NSE:NIFTY 50")
         return list(q.values())[0]["last_price"]
-    except:
+    except Exception as e:
+        st.error(f"Kite Error: {e}")
         return 0
+
 
 # ==============================
 # LOAD INSTRUMENTS
