@@ -1,0 +1,4 @@
+supabase
+pandas
+numpy
+pytz
