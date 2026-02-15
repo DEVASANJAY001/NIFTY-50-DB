@@ -4,3 +4,4 @@ numpy
 kiteconnect
 pytz
 requests
+psycopg2-binary
