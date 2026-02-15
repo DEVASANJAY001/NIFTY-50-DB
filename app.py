@@ -10,11 +10,7 @@ import time
 # ==============================
 # CONFIG
 # ==============================
-API_KEY = "kn65xzgea9y4unfs"
-ACCESS_TOKEN = "ur3HF0zzZHmFYisOU1RZFgLuiuW3G46d"
 
-SUPABASE_ANON_KEY = "sb_publishable_LC4Z9o5yR9y2_T7cqiORVg_6P3ObJIq"
-SUPABASE_URL = "https://kucugefswvvkpcmoaxuk.supabase.co"
 
 INDEX = "NIFTY"
 STRIKE_RANGE = 800
