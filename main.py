@@ -1,33 +1,55 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import time
+from datetime import datetime
 from kiteconnect import KiteConnect
+from streamlit_autorefresh import st_autorefresh
+import psycopg2
+from psycopg2.extras import execute_batch
+import os
+import time
 
 # ==============================
 # CONFIG
 # ==============================
 API_KEY = os.getenv("KITE_API_KEY")
 ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 INDEX = "NIFTY"
 STRIKE_RANGE = 800
 MAX_CONTRACTS = 80
 
+# ==============================
+# DATABASE CONNECTION
+# ==============================
+conn = psycopg2.connect(DATABASE_URL)
+conn.autocommit = True
+cursor = conn.cursor()
+
+# ==============================
+# SESSION STATE
+# ==============================
+if "volume_history" not in st.session_state:
+    st.session_state.volume_history = {}
+
+# ==============================
+# KITE LOGIN
+# ==============================
 kite = KiteConnect(api_key=API_KEY)
 kite.set_access_token(ACCESS_TOKEN)
 
-# ==============================
-# VOLUME MEMORY (In-Memory)
-# ==============================
-volume_history = {}
+st.set_page_config(layout="wide")
+st.title("🚀 SMART OPTION CONTRACT SELECTOR – ELITE PRO")
+
+st_autorefresh(interval=3000, key="refresh")
 
 # ==============================
-# PRICE FETCH
+# PRICE
 # ==============================
 def get_price():
     try:
-        symbol = "NSE:NIFTY 50"
-        q = kite.ltp(symbol)
+        q = kite.ltp("NSE:NIFTY 50")
         return list(q.values())[0]["last_price"]
     except:
         return 0
@@ -35,49 +57,71 @@ def get_price():
 # ==============================
 # LOAD INSTRUMENTS
 # ==============================
+@st.cache_data(ttl=600)
 def load_instruments():
     return pd.DataFrame(kite.instruments())
 
 # ==============================
-# VOLUME SPIKE ENGINE
+# VOLUME ENGINE
 # ==============================
-def update_volume_history(token, current_volume):
+def update_volume_history(token, volume):
     now = time.time()
-
-    if token not in volume_history:
-        volume_history[token] = []
-
-    volume_history[token].append((now, current_volume))
-
-    # Keep last 5 minutes only
-    volume_history[token] = [
-        (t, v) for t, v in volume_history[token]
+    if token not in st.session_state.volume_history:
+        st.session_state.volume_history[token] = []
+    st.session_state.volume_history[token].append((now, volume))
+    st.session_state.volume_history[token] = [
+        (t, v) for t, v in st.session_state.volume_history[token]
         if now - t <= 300
     ]
 
-
-def calculate_volume_spike(token):
+def calculate_spike(token):
     now = time.time()
-    history = volume_history.get(token, [])
+    history = st.session_state.volume_history.get(token, [])
 
-    def volume_window(seconds):
-        relevant = [(t, v) for t, v in history if now - t <= seconds]
+    def window(sec):
+        relevant = [(t, v) for t, v in history if now - t <= sec]
         if len(relevant) >= 2:
             return relevant[-1][1] - relevant[0][1]
         return 0
 
     return {
-        "vol_10s": volume_window(10),
-        "vol_30s": volume_window(30),
-        "vol_1m": volume_window(60),
-        "vol_3m": volume_window(180),
-        "vol_5m": volume_window(300),
+        "vol_10s": window(10),
+        "vol_30s": window(30),
+        "vol_1m": window(60),
+        "vol_3m": window(180),
+        "vol_5m": window(300),
     }
 
 # ==============================
-# MAIN DATA MODEL
+# SAVE TO SUPABASE
 # ==============================
-def generate_option_dataframe():
+def save_to_supabase(df):
+    if df.empty:
+        return
+
+    query = """
+    INSERT INTO nifty_option_snapshots (
+        symbol, strike, type, ltp, volume, oi, oi_change, iv,
+        vol_10s, vol_30s, vol_1m, vol_3m, vol_5m,
+        volume_score, oi_score, oi_change_score, iv_score,
+        vol_spike_score, score, confidence, volume_power
+    ) VALUES (
+        %(symbol)s, %(strike)s, %(type)s, %(ltp)s, %(volume)s,
+        %(oi)s, %(oi_change)s, %(iv)s,
+        %(vol_10s)s, %(vol_30s)s, %(vol_1m)s, %(vol_3m)s, %(vol_5m)s,
+        %(volume_score)s, %(oi_score)s, %(oi_change_score)s,
+        %(iv_score)s, %(vol_spike_score)s,
+        %(score)s, %(confidence)s, %(volume_power)s
+    )
+    """
+
+    data = df.to_dict("records")
+    execute_batch(cursor, query, data)
+
+# ==============================
+# OPTION CHAIN
+# ==============================
+def get_chain():
 
     instruments = load_instruments()
 
@@ -106,7 +150,7 @@ def generate_option_dataframe():
     except:
         return pd.DataFrame()
 
-    data = []
+    rows = []
 
     for _, row in df.iterrows():
         token = str(row["instrument_token"])
@@ -115,9 +159,9 @@ def generate_option_dataframe():
         volume = q.get("volume", 0)
 
         update_volume_history(token, volume)
-        spike = calculate_volume_spike(token)
+        spike = calculate_spike(token)
 
-        data.append({
+        rows.append({
             "symbol": row["tradingsymbol"],
             "strike": row["strike"],
             "type": row["instrument_type"],
@@ -126,22 +170,14 @@ def generate_option_dataframe():
             "oi": q.get("oi", 0),
             "oi_change": q.get("oi_day_high", 0) - q.get("oi_day_low", 0),
             "iv": q.get("implied_volatility", 0),
-
-            "vol_10s": spike["vol_10s"],
-            "vol_30s": spike["vol_30s"],
-            "vol_1m": spike["vol_1m"],
-            "vol_3m": spike["vol_3m"],
-            "vol_5m": spike["vol_5m"],
+            **spike
         })
 
-    df_final = pd.DataFrame(data)
+    df_final = pd.DataFrame(rows)
 
     if df_final.empty:
         return df_final
 
-    # ==============================
-    # SCORING MODEL
-    # ==============================
     df_final["volume_score"] = df_final["volume"] / (df_final["volume"].max() or 1)
     df_final["oi_score"] = df_final["oi"] / (df_final["oi"].max() or 1)
     df_final["oi_change_score"] = df_final["oi_change"] / (df_final["oi_change"].max() or 1)
@@ -176,3 +212,20 @@ def generate_option_dataframe():
     )
 
     return df_final.sort_values("score", ascending=False)
+
+# ==============================
+# UI
+# ==============================
+price = get_price()
+st.metric("NIFTY PRICE", price)
+
+df = get_chain()
+
+if df.empty:
+    st.warning("No data available")
+    st.stop()
+
+# 🔥 SAVE EVERY 3 SECONDS
+save_to_supabase(df)
+
+st.dataframe(df.head(20), use_container_width=True)
