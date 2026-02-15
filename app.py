@@ -6,15 +6,14 @@ from kiteconnect import KiteConnect
 from streamlit_autorefresh import st_autorefresh
 import psycopg2
 from psycopg2.extras import execute_batch
-import os
 import time
 
 # ==============================
-# CONFIG
+# CONFIG (STREAMLIT SECRETS)
 # ==============================
-API_KEY = os.getenv("KITE_API_KEY")
-ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+API_KEY = st.secrets["KITE_API_KEY"]
+ACCESS_TOKEN = st.secrets["KITE_ACCESS_TOKEN"]
+DATABASE_URL = st.secrets["DATABASE_URL"]
 
 INDEX = "NIFTY"
 STRIKE_RANGE = 800
@@ -23,9 +22,14 @@ MAX_CONTRACTS = 80
 # ==============================
 # DATABASE CONNECTION
 # ==============================
-conn = psycopg2.connect(DATABASE_URL)
-conn.autocommit = True
-cursor = conn.cursor()
+try:
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    conn.autocommit = True
+    cursor = conn.cursor()
+except Exception as e:
+    st.error("Database connection failed.")
+    st.error(str(e))
+    st.stop()
 
 # ==============================
 # SESSION STATE
@@ -45,7 +49,7 @@ st.title("🚀 SMART OPTION CONTRACT SELECTOR – ELITE PRO")
 st_autorefresh(interval=3000, key="refresh")
 
 # ==============================
-# PRICE
+# GET NIFTY PRICE
 # ==============================
 def get_price():
     try:
@@ -62,7 +66,7 @@ def load_instruments():
     return pd.DataFrame(kite.instruments())
 
 # ==============================
-# VOLUME ENGINE
+# VOLUME TRACKING
 # ==============================
 def update_volume_history(token, volume):
     now = time.time()
@@ -119,7 +123,7 @@ def save_to_supabase(df):
     execute_batch(cursor, query, data)
 
 # ==============================
-# OPTION CHAIN
+# OPTION CHAIN ENGINE
 # ==============================
 def get_chain():
 
@@ -225,7 +229,7 @@ if df.empty:
     st.warning("No data available")
     st.stop()
 
-# 🔥 SAVE EVERY 3 SECONDS
+# SAVE TO DATABASE
 save_to_supabase(df)
 
 st.dataframe(df.head(20), use_container_width=True)
