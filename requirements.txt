@@ -1,4 +1,6 @@
 supabase
 pandas
 numpy
+kiteconnect
 pytz
+requests
