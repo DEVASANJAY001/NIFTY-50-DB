@@ -1,35 +1,25 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
 from kiteconnect import KiteConnect
 from streamlit_autorefresh import st_autorefresh
-import psycopg2
-from psycopg2.extras import execute_batch
+from supabase import create_client
 import time
 
 # ==============================
-# CONFIG (STREAMLIT SECRETS)
+# CONFIG
 # ==============================
 API_KEY = st.secrets["KITE_API_KEY"]
 ACCESS_TOKEN = st.secrets["KITE_ACCESS_TOKEN"]
-DATABASE_URL = st.secrets["DATABASE_URL"]
+
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_PUBLISHABLE_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 INDEX = "NIFTY"
 STRIKE_RANGE = 800
 MAX_CONTRACTS = 80
-
-# ==============================
-# DATABASE CONNECTION
-# ==============================
-try:
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    conn.autocommit = True
-    cursor = conn.cursor()
-except Exception as e:
-    st.error("Database connection failed.")
-    st.error(str(e))
-    st.stop()
 
 # ==============================
 # SESSION STATE
@@ -49,7 +39,7 @@ st.title("🚀 SMART OPTION CONTRACT SELECTOR – ELITE PRO")
 st_autorefresh(interval=3000, key="refresh")
 
 # ==============================
-# GET NIFTY PRICE
+# PRICE
 # ==============================
 def get_price():
     try:
@@ -66,7 +56,7 @@ def load_instruments():
     return pd.DataFrame(kite.instruments())
 
 # ==============================
-# VOLUME TRACKING
+# VOLUME ENGINE
 # ==============================
 def update_volume_history(token, volume):
     now = time.time()
@@ -97,33 +87,17 @@ def calculate_spike(token):
     }
 
 # ==============================
-# SAVE TO SUPABASE
+# SAVE TO SUPABASE (REST)
 # ==============================
 def save_to_supabase(df):
     if df.empty:
         return
-
-    query = """
-    INSERT INTO nifty_option_snapshots (
-        symbol, strike, type, ltp, volume, oi, oi_change, iv,
-        vol_10s, vol_30s, vol_1m, vol_3m, vol_5m,
-        volume_score, oi_score, oi_change_score, iv_score,
-        vol_spike_score, score, confidence, volume_power
-    ) VALUES (
-        %(symbol)s, %(strike)s, %(type)s, %(ltp)s, %(volume)s,
-        %(oi)s, %(oi_change)s, %(iv)s,
-        %(vol_10s)s, %(vol_30s)s, %(vol_1m)s, %(vol_3m)s, %(vol_5m)s,
-        %(volume_score)s, %(oi_score)s, %(oi_change_score)s,
-        %(iv_score)s, %(vol_spike_score)s,
-        %(score)s, %(confidence)s, %(volume_power)s
-    )
-    """
-
+    
     data = df.to_dict("records")
-    execute_batch(cursor, query, data)
+    supabase.table("nifty_option_snapshots").insert(data).execute()
 
 # ==============================
-# OPTION CHAIN ENGINE
+# OPTION CHAIN
 # ==============================
 def get_chain():
 
@@ -205,16 +179,6 @@ def get_chain():
 
     df_final["confidence"] = (df_final["score"] * 100).round(2)
 
-    avg_spike = df_final["vol_spike_score"].mean()
-
-    df_final["volume_power"] = np.where(
-        (df_final["vol_10s"] > avg_spike * 1.5) |
-        (df_final["vol_30s"] > avg_spike * 1.5) |
-        (df_final["vol_1m"] > avg_spike * 1.5),
-        "🚀 VOLUME BURST",
-        ""
-    )
-
     return df_final.sort_values("score", ascending=False)
 
 # ==============================
@@ -229,7 +193,6 @@ if df.empty:
     st.warning("No data available")
     st.stop()
 
-# SAVE TO DATABASE
 save_to_supabase(df)
 
 st.dataframe(df.head(20), use_container_width=True)
