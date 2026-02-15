@@ -1,7 +1,7 @@
-supabase
+streamlit
+streamlit-autorefresh
+kiteconnect
 pandas
 numpy
-kiteconnect
-pytz
-requests
 psycopg2-binary
+supabase
